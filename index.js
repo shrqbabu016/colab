@@ -9,226 +9,70 @@ puppeteer.use(StealthPlugin());
 // Sleep helper
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Helper to parse cookies from either Cookie Header string or JSON
+function parseCookies(input) {
+  if (!input) return [];
+  const trimmed = input.trim();
+
+  // 1. If it's JSON format
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed;
+      return Object.entries(parsed).map(([name, value]) => ({
+        name,
+        value: String(value),
+        domain: '.google.com',
+        path: '/'
+      }));
+    } catch {}
+  }
+
+  // 2. If it's a Cookie String: "name1=value1; name2=value2; ..."
+  const pairs = trimmed.split(/;\s*|\r?\n/);
+  const cookies = [];
+  for (const pair of pairs) {
+    const cleanPair = pair.trim();
+    if (!cleanPair || !cleanPair.includes('=')) continue;
+    const eqIdx = cleanPair.indexOf('=');
+    const name = cleanPair.substring(0, eqIdx).trim();
+    const value = cleanPair.substring(eqIdx + 1).trim();
+    if (name) {
+      cookies.push({
+        name,
+        value,
+        domain: '.google.com',
+        path: '/'
+      });
+    }
+  }
+  return cookies;
+}
+
 async function run() {
   const colabUrl = process.env.COLAB_URL;
-  const cookiesInput = process.env.COLAB_COOKIES;
+  let cookiesInput = process.env.COLAB_COOKIES || '';
   const runAfterRestart = process.env.RUN_AFTER_RESTART === 'true';
+
+  // Support reading from local file if cookies.txt or cookies.json exists
+  if (!cookiesInput) {
+    if (fs.existsSync('cookies.txt')) {
+      cookiesInput = fs.readFileSync('cookies.txt', 'utf-8');
+    } else if (fs.existsSync('cookies.json')) {
+      cookiesInput = fs.readFileSync('cookies.json', 'utf-8');
+    }
+  }
 
   if (!colabUrl) {
     console.error('❌ Error: COLAB_URL environment variable is required.');
     process.exit(1);
   }
 
-  let cookies = [
-    {
-        "domain": ".google.com",
-        "expirationDate": 1825934425.609218,
-        "hostOnly": false,
-        "httpOnly": false,
-        "name": "SAPISID",
-        "path": "/",
-        "sameSite": null,
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "BwEYm2ne2RL9klfh/AzYSDd3sIhT_AtUEt"
-    },
-    {
-        "domain": ".google.com",
-        "expirationDate": 1825934425.60935,
-        "hostOnly": false,
-        "httpOnly": false,
-        "name": "__Secure-3PAPISID",
-        "path": "/",
-        "sameSite": "no_restriction",
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "BwEYm2ne2RL9klfh/AzYSDd3sIhT_AtUEt"
-    },
-    {
-        "domain": ".google.com",
-        "expirationDate": 1804934109.684451,
-        "hostOnly": false,
-        "httpOnly": true,
-        "name": "AEC",
-        "path": "/",
-        "sameSite": "lax",
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "Aaa9EJqsE02EgasJHzNRiydetRFt8g-Pk7pUrYxLGu56N2Vi1Fg2Fm4FEMk"
-    },
-    {
-        "domain": ".google.com",
-        "expirationDate": 1807195341.540743,
-        "hostOnly": false,
-        "httpOnly": true,
-        "name": "NID",
-        "path": "/",
-        "sameSite": "no_restriction",
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "CvsDCAESrQMBOxGDSMbZHJwGRJtCFY5k-AwETdq5Z6D7qNb9s_Pl26u4l61HTX-G2vDRIQFuYCO7lmBFDoshFnYkSleG6gJ-mDNc-N1UuoiXy4xgwV6Gr8VDwfhr3DH8emp41SWnD11oMs40IEMeFbv4DXHe5Cv85lIU4LpW0KQSstyuaYbBPDBFZyVuwuU7yA_Gf77h2VrU9gt5WTU_EhvOBXddBQevEDKcg4HkeSVDJIy1h1sHH6ombkrNp2g4_JnCuuS_fyL8z9UnsBqc2XCgOOIBc0hIPoRT2FwV_UxXjimyB3KQTJKm5tebGoEoBGwAB4fRRXYkshAo50wyvJ94dHFjzbOvfcRly-pVUEkGiTRWHtFvNuJkeBu8__ODfqKmmLxapcZgpLaYArTOw0WrYIXCxKzLgNFf37MEyfbRdLg2fRTVEcteSrHSd3niMk9cX_FevQmD90bVpct1ybmzquyF9xDt3g7RIb2x1UbBuaPL2RO0jE71UxJZQa7jpudq_bmG6uSLqXr3LGnOL-6FZLSanfZV6BBgI1kZXVw03zBKEq3AYp1xM0G-CLcGqKSaNxwoATJFAdKsB8_Y7N2nN4QlwVjDNYkBOI_sZnMtJrQZpPFzEcVzX5Z0uaVae4SWP2nGtScSsYXS1by4S1HBFZhm5p4jo2JhvzIE"
-    },
-    {
-        "domain": ".google.com",
-        "expirationDate": 1822927382.539997,
-        "hostOnly": false,
-        "httpOnly": true,
-        "name": "__Secure-1PSIDTS",
-        "path": "/",
-        "sameSite": null,
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "sidts-CjEBkldj_yNGQZKBE0SLy9YCLw4925gyh-oDZVjJak13m_4ZZRoqMGESEIxBVePd-B28EAA"
-    },
-    {
-        "domain": ".google.com",
-        "expirationDate": 1825934425.609283,
-        "hostOnly": false,
-        "httpOnly": false,
-        "name": "__Secure-1PAPISID",
-        "path": "/",
-        "sameSite": null,
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "BwEYm2ne2RL9klfh/AzYSDd3sIhT_AtUEt"
-    },
-    {
-        "domain": ".google.com",
-        "expirationDate": 1825934425.610064,
-        "hostOnly": false,
-        "httpOnly": true,
-        "name": "__Secure-3PSID",
-        "path": "/",
-        "sameSite": "no_restriction",
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "g.a000DQllU3O0KUJg44pTjiVSx_d8Xoy91Cjrik59pECVI3m0-_XcpvNafl6mhaAkXHTCdI1qeQACgYKAbESARISFQHGX2MikBRnrg0nmwAcV6O1yAxepRoVAUF8yKrHmq7mNM0HXAHVeTuIXKDB0076"
-    },
-    {
-        "domain": ".google.com",
-        "expirationDate": 1825934425.609997,
-        "hostOnly": false,
-        "httpOnly": true,
-        "name": "__Secure-1PSID",
-        "path": "/",
-        "sameSite": null,
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "g.a000DQllU3O0KUJg44pTjiVSx_d8Xoy91Cjrik59pECVI3m0-_Xc4HI2VglDzp2ARyFQTvrryQACgYKAY8SARISFQHGX2MiwemqRJ-9TDWicv80LCLxqhoVAUF8yKqwJk_mgIzFqq30HxUbBSxe0076"
-    },
-    {
-        "domain": ".google.com",
-        "expirationDate": 1822927939.54388,
-        "hostOnly": false,
-        "httpOnly": true,
-        "name": "__Secure-1PSIDCC",
-        "path": "/",
-        "sameSite": null,
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "AKEyXzWNyQQ8wGaqk1tCuVKSalKoOMCiQka_7qkc94LeHiTHU3ZmYKznA5WMXJjCOIevpuwsIdk"
-    },
-    {
-        "domain": ".google.com",
-        "expirationDate": 1822927939.544157,
-        "hostOnly": false,
-        "httpOnly": true,
-        "name": "__Secure-3PSIDCC",
-        "path": "/",
-        "sameSite": "no_restriction",
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "AKEyXzVrhv09Yy8rtIo5D7SavCxGcQF8f-EsyLFSUVCISUSv3HwA56f5pNwTFeteYDlWsRalnBg"
-    },
-    {
-        "domain": ".google.com",
-        "expirationDate": 1822927382.540536,
-        "hostOnly": false,
-        "httpOnly": true,
-        "name": "__Secure-3PSIDTS",
-        "path": "/",
-        "sameSite": "no_restriction",
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "sidts-CjEBkldj_yNGQZKBE0SLy9YCLw4925gyh-oDZVjJak13m_4ZZRoqMGESEIxBVePd-B28EAA"
-    },
-    {
-        "domain": "myaccount.google.com",
-        "expirationDate": 1825951924.552148,
-        "hostOnly": true,
-        "httpOnly": true,
-        "name": "__Secure-OSID",
-        "path": "/",
-        "sameSite": "no_restriction",
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "g.a000DQllUwynxOJHi86FjvNarAl0uzKrW5Pn6ea7f29FB3wiaJKszVSetzVO7nIargrGZQRK-wACgYKAWsSARISFQHGX2Mi5pguY9ZduENmIEo4XWNWNRoVAUF8yKra1UKv2PMrlA3T38Egvsdb0076"
-    },
-    {
-        "domain": "myaccount.google.com",
-        "expirationDate": 1825951924.551865,
-        "hostOnly": true,
-        "httpOnly": true,
-        "name": "OSID",
-        "path": "/",
-        "sameSite": null,
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "g.a000DQllUwynxOJHi86FjvNarAl0uzKrW5Pn6ea7f29FB3wiaJKsysYZY2ZBv_u6IxRo53NfKAACgYKAdoSARISFQHGX2MidDPStfYve4Bozp_imEw1RhoVAUF8yKq7Gv6_bVZRs3HgDEZ2lHMj0076"
-    },
-    {
-        "domain": "myaccount.google.com",
-        "expirationDate": 1793099874,
-        "hostOnly": true,
-        "httpOnly": false,
-        "name": "OTZ",
-        "path": "/",
-        "sameSite": null,
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "8803398_34_34__34_"
-    },
-    {
-        "domain": ".google.com",
-        "expirationDate": 1825934425.609078,
-        "hostOnly": false,
-        "httpOnly": true,
-        "name": "SSID",
-        "path": "/",
-        "sameSite": null,
-        "secure": true,
-        "session": false,
-        "storeId": null,
-        "value": "AsRiwKmlS3OB53F1N"
-    }
-];
-  if (cookiesInput) {
-    try {
-      if (fs.existsSync(cookiesInput)) {
-        cookies = JSON.parse(fs.readFileSync(cookiesInput, 'utf-8'));
-      } else {
-        cookies = JSON.parse(cookiesInput);
-      }
-    } catch (e) {
-      console.error('❌ Error parsing COLAB_COOKIES JSON:', e.message);
-      process.exit(1);
-    }
+  const cookies = parseCookies(cookiesInput);
+  if (cookies.length === 0) {
+    console.warn('⚠️ Warning: No cookies provided. Google authentication may fail.');
   } else {
-    console.warn('⚠️ Warning: COLAB_COOKIES not provided. Google authentication may fail.');
+    console.log(`🍪 Successfully parsed ${cookies.length} cookies from string/input.`);
   }
 
   console.log(`🚀 Starting Colab Auto Restarter...`);
