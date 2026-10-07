@@ -37,6 +37,12 @@ function parseCookies(input) {
     const eqIdx = cleanPair.indexOf('=');
     const name = cleanPair.substring(0, eqIdx).trim();
     const value = cleanPair.substring(eqIdx + 1).trim();
+
+    // Skip origin-bound cookies from other subdomains (like myaccount)
+    if (name === 'OSID' || name === '__Secure-OSID') {
+      continue;
+    }
+
     if (name) {
       cookies.push({
         name,
@@ -73,6 +79,11 @@ async function run() {
     console.warn('⚠️ Warning: No cookies provided. Google authentication may fail.');
   } else {
     console.log(`🍪 Successfully parsed ${cookies.length} cookies from string/input.`);
+    const hasSID = cookies.some(c => c.name === 'SID');
+    const hasHSID = cookies.some(c => c.name === 'HSID');
+    if (!hasSID || !hasHSID) {
+      console.warn(`⚠️ Warning: "SID" or "HSID" cookie is missing in your string! Google often shows "Signed out on a different tab" when SID is missing.`);
+    }
   }
 
   console.log(`🚀 Starting Colab Auto Restarter...`);
