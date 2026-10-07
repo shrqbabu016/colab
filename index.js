@@ -59,30 +59,49 @@ async function run() {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
     );
 
-    // Sanitize and set cookies
+    // Sanitize and set cookies individually
     if (cookies.length > 0) {
       console.log(`🍪 Injecting ${cookies.length} cookies...`);
-      const sanitizedCookies = cookies.map((cookie) => {
-        const clean = {
-          name: cookie.name,
-          value: cookie.value,
-          domain: cookie.domain.startsWith('.') ? cookie.domain : `.${cookie.domain}`,
-          path: cookie.path || '/'
-        };
-        if (typeof cookie.secure === 'boolean') clean.secure = cookie.secure;
-        if (typeof cookie.httpOnly === 'boolean') clean.httpOnly = cookie.httpOnly;
-        
-        // Normalize sameSite if necessary
-        if (cookie.sameSite) {
-          const s = cookie.sameSite.toLowerCase();
-          if (s === 'lax') clean.sameSite = 'Lax';
-          else if (s === 'strict') clean.sameSite = 'Strict';
-          else if (s === 'none' || s === 'no_restriction') clean.sameSite = 'None';
-        }
-        return clean;
-      });
+      let successCount = 0;
+      for (const cookie of cookies) {
+        try {
+          const clean = {
+            name: cookie.name,
+            value: cookie.value,
+            path: cookie.path || '/'
+          };
 
-      await page.setCookie(...sanitizedCookies);
+          // RFC 6265: Cookies starting with __Host- MUST NOT have a domain attribute
+          if (!cookie.name.startsWith('__Host-') && cookie.domain) {
+            clean.domain = cookie.domain;
+          }
+
+          if (typeof cookie.secure === 'boolean') clean.secure = cookie.secure;
+          if (typeof cookie.httpOnly === 'boolean') clean.httpOnly = cookie.httpOnly;
+          if (cookie.expirationDate) clean.expires = cookie.expirationDate;
+
+          if (cookie.sameSite) {
+            const s = String(cookie.sameSite).toLowerCase();
+            if (s === 'lax') clean.sameSite = 'Lax';
+            else if (s === 'strict') clean.sameSite = 'Strict';
+            else if (s === 'none' || s === 'no_restriction') clean.sameSite = 'None';
+          }
+
+          await page.setCookie(clean);
+          successCount++;
+        } catch (err) {
+          // If setting with domain failed, try without domain
+          try {
+            await page.setCookie({
+              name: cookie.name,
+              value: cookie.value,
+              url: 'https://colab.research.google.com'
+            });
+            successCount++;
+          } catch {}
+        }
+      }
+      console.log(`✅ Successfully injected ${successCount}/${cookies.length} cookies.`);
     }
 
     console.log('🌐 Navigating to Colab notebook...');

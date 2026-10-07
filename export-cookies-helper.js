@@ -26,10 +26,18 @@ async function exportCookies() {
     });
   });
 
-  const cookies = await page.cookies();
-  fs.writeFileSync('cookies.json', JSON.stringify(cookies, null, 2));
+  // Use CDP session to get ALL cookies across all domains (Google, Drive, Colab)
+  const client = await page.target().createCDPSession();
+  const { cookies } = await client.send('Network.getAllCookies');
 
-  console.log('\n✅ Cookies successfully saved to cookies.json!');
+  // Filter Google-related cookies
+  const googleCookies = cookies.filter(
+    (c) => c.domain.includes('google.com') || c.domain.includes('googleusercontent.com')
+  );
+
+  fs.writeFileSync('cookies.json', JSON.stringify(googleCookies, null, 2));
+
+  console.log(`\n✅ Saved ${googleCookies.length} Google cookies to cookies.json!`);
   console.log('📋 Now copy the entire contents of cookies.json and paste it into GitHub Secrets as COLAB_COOKIES.');
 
   await browser.close();
