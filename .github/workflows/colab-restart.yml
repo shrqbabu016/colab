@@ -2,9 +2,8 @@ name: Colab Auto Restarter
 
 on:
   schedule:
-    # Runs at minute 0 of every hour (e.g. 1:00, 2:00, 3:00, ...)
+    # Runs every 1 hour
     - cron: '0 * * * *'
-  # Allows manual execution anytime via GitHub Actions "Run workflow" button
   workflow_dispatch:
 
 jobs:
@@ -20,16 +19,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci || npm install
+        run: npm install
 
       - name: Run Puppeteer Colab Restarter
         env:
           COLAB_URL: ${{ secrets.COLAB_URL }}
           COLAB_COOKIES: ${{ secrets.COLAB_COOKIES }}
-          # Set to 'true' if you want it to automatically run all cells after restarting
           RUN_AFTER_RESTART: 'true'
         run: node index.js
 
