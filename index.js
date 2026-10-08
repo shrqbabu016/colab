@@ -297,161 +297,138 @@ async function run() {
     // Dismiss any initial warning modals
     await handleAllModals();
 
-    // Step 2: Trigger "Restart Session and Run All" or "Restart"
-    console.log('🔄 Triggering Colab Restart & Run...');
-    let restartTriggered = false;
+    // Helper: Open Runtime Menu and click target item
+    async function clickRuntimeMenuItem(targetNames) {
+      return await page.evaluate((names) => {
+        function findDeep(predicate, root = document) {
+          if (predicate(root)) return root;
+          if (root.shadowRoot) {
+            const found = findDeep(predicate, root.shadowRoot);
+            if (found) return found;
+          }
+          for (const child of root.children || []) {
+            const found = findDeep(predicate, child);
+            if (found) return found;
+          }
+          return null;
+        }
 
-    // Strategy 1: Colab's native JS API
+        // 1. Locate and click Runtime top-level menu button
+        const runtimeBtn = findDeep((el) => {
+          return (
+            el.id === 'runtime-menu-button' ||
+            (el.getAttribute && el.getAttribute('role') === 'menuitem' && (el.innerText || '').trim() === 'Runtime') ||
+            (el.tagName === 'DIV' && (el.innerText || '').trim() === 'Runtime')
+          );
+        });
+
+        if (!runtimeBtn) return null;
+        runtimeBtn.click();
+
+        // 2. Search opened menu items
+        const menuItems = Array.from(document.querySelectorAll('.goog-menuitem, [role="menuitem"], mwc-list-item'));
+        for (const name of names) {
+          for (const item of menuItems) {
+            const text = (item.innerText || item.textContent || '').trim().toLowerCase();
+            if (text.includes(name.toLowerCase())) {
+              item.click();
+              return text;
+            }
+          }
+        }
+        return 'opened_menu_only';
+      }, targetNames);
+    }
+
+    // Step 2: Trigger Restart and Run All
+    console.log('🔄 Triggering Colab Restart and Run All...');
+    let executedAction = null;
+
+    // Attempt 1: Click "Restart session and run all" directly from Runtime menu
     try {
-      const apiAction = await page.evaluate(() => {
-        if (window.colab && window.colab.global && window.colab.global.notebook) {
-          if (typeof window.colab.global.notebook.restartAndRunAll === 'function') {
-            window.colab.global.notebook.restartAndRunAll();
-            return 'restartAndRunAll';
-          }
-          if (window.colab.global.notebook.kernel && typeof window.colab.global.notebook.kernel.restart === 'function') {
-            window.colab.global.notebook.kernel.restart();
-            return 'kernel.restart';
-          }
-        }
-        return null;
-      });
-
-      if (apiAction) {
-        console.log(`✅ Triggered via Colab Native API: ${apiAction}`);
-        restartTriggered = true;
+      console.log('📂 Attempting to click "Restart session and run all" via Runtime menu...');
+      const clicked = await clickRuntimeMenuItem([
+        'restart session and run all',
+        'restart and run all',
+        'restart session & run all'
+      ]);
+      if (clicked && clicked !== 'opened_menu_only') {
+        executedAction = clicked;
+        console.log(`✅ Selected menu option: "${executedAction}"`);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.log('Notice on menu attempt 1:', e.message);
+    }
 
-    // Strategy 2: Shadow DOM piercing to click Runtime Menu
-    if (!restartTriggered) {
+    // Attempt 2: If "Restart and run all" not directly found, trigger Restart Session then Run All
+    if (!executedAction) {
       try {
-        console.log('📂 Searching Runtime menu through Shadow DOM...');
-        const clickedMenu = await page.evaluate(() => {
-          function findDeep(predicate, root = document) {
-            if (predicate(root)) return root;
-            if (root.shadowRoot) {
-              const found = findDeep(predicate, root.shadowRoot);
-              if (found) return found;
-            }
-            for (const child of root.children || []) {
-              const found = findDeep(predicate, child);
-              if (found) return found;
-            }
-            return null;
-          }
-
-          const runtimeBtn = findDeep((el) => {
-            return (
-              el.id === 'runtime-menu-button' ||
-              (el.getAttribute && el.getAttribute('role') === 'menuitem' && (el.innerText || '').trim() === 'Runtime') ||
-              (el.tagName === 'DIV' && (el.innerText || '').trim() === 'Runtime')
-            );
-          });
-
-          if (runtimeBtn) {
-            runtimeBtn.click();
-            return true;
-          }
-          return false;
-        });
-
-        if (clickedMenu) {
-          console.log('📂 Opened Runtime menu. Looking for Restart / Run all option...');
-          await sleep(1500);
-
-          const menuAction = await page.evaluate(() => {
-            const menuItems = Array.from(document.querySelectorAll('.goog-menuitem, [role="menuitem"], mwc-list-item'));
-            // Prefer "Restart session and run all"
-            for (const item of menuItems) {
-              const text = (item.innerText || '').toLowerCase();
-              if (text.includes('restart session and run all') || text.includes('restart and run all')) {
-                item.click();
-                return 'restart_and_run_all';
-              }
-            }
-            // Fallback to "Restart session"
-            for (const item of menuItems) {
-              const text = (item.innerText || '').toLowerCase();
-              if (text.includes('restart session') || text.includes('restart runtime')) {
-                item.click();
-                return 'restart_session';
-              }
-            }
-            return null;
-          });
-
-          if (menuAction) {
-            console.log(`✅ Selected menu item: ${menuAction}`);
-            restartTriggered = true;
-          }
+        console.log('📂 Trying "Restart session" from Runtime menu...');
+        const restartClicked = await clickRuntimeMenuItem([
+          'restart session',
+          'restart runtime'
+        ]);
+        if (restartClicked && restartClicked !== 'opened_menu_only') {
+          console.log(`✅ Clicked "${restartClicked}".`);
+          executedAction = restartClicked;
         }
-      } catch (e) {
-        console.log('Notice on menu traversal:', e.message);
+      } catch (e) {}
+
+      // Fallback: API restart if menu wasn't clicked
+      if (!executedAction) {
+        try {
+          const apiRestart = await page.evaluate(() => {
+            if (window.colab?.global?.notebook?.kernel?.restart) {
+              window.colab.global.notebook.kernel.restart();
+              return true;
+            }
+            return false;
+          });
+          if (apiRestart) console.log('✅ Triggered kernel restart via Colab API.');
+        } catch (e) {}
       }
+
+      // Handle confirmation modal
+      await sleep(2500);
+      await handleAllModals();
+
+      // Now trigger Run All
+      console.log('▶️ Waiting 6s for kernel restart to initialize...');
+      await sleep(6000);
+
+      console.log('▶️ Triggering "Run all" from Runtime menu...');
+      try {
+        const runAllClicked = await clickRuntimeMenuItem(['run all']);
+        if (runAllClicked && runAllClicked !== 'opened_menu_only') {
+          console.log(`✅ Clicked "${runAllClicked}" from Runtime menu.`);
+          executedAction = 'run_all';
+        }
+      } catch (e) {}
     }
 
-    // Strategy 3: Keyboard shortcuts fallback
-    if (!restartTriggered) {
-      console.log('⌨️ Dispatching Colab restart keyboard shortcut (Ctrl+M .)...');
-      await page.evaluate(() => {
-        const ctrlM = new KeyboardEvent('keydown', { key: 'm', code: 'KeyM', keyCode: 77, ctrlKey: true, bubbles: true });
-        document.dispatchEvent(ctrlM);
-        const period = new KeyboardEvent('keydown', { key: '.', code: 'Period', keyCode: 190, bubbles: true });
-        document.dispatchEvent(period);
-      });
-      await sleep(1500);
+    // Always handle any modal after trigger (Confirm restart / "Run anyway")
+    await sleep(2500);
+    const confirmedAny = await handleAllModals();
+    if (confirmedAny) {
+      console.log('✅ Confirmed modal dialog (Restart / Run anyway).');
     }
 
-    // Handle restart confirmation dialog
-    await sleep(2000);
-    const modalConfirmed = await handleAllModals();
-    if (modalConfirmed) {
-      console.log('✅ Confirmed restart modal dialog.');
-    }
-
-    // Step 3: Trigger "Run All" (Ctrl+F9)
+    // Backup keyboard shortcut for Run All
     if (runAfterRestart) {
-      console.log('▶️ Waiting 8s for kernel restart to settle before Run All...');
-      await sleep(8000);
-
-      console.log('▶️ Sending "Run All" (Ctrl+F9) to document...');
-      await page.evaluate(() => {
-        // Direct event dispatch to both window and document
-        const f9 = new KeyboardEvent('keydown', {
-          key: 'F9',
-          code: 'F9',
-          keyCode: 120,
-          which: 120,
-          ctrlKey: true,
-          metaKey: true,
-          bubbles: true,
-          cancelable: true
-        });
-        document.dispatchEvent(f9);
-        window.dispatchEvent(f9);
-
-        // Also try Colab notebook runAll if present
-        if (window.colab?.global?.notebook?.runAll) {
-          window.colab.global.notebook.runAll();
-        }
-      });
-
-      // Also trigger via Puppeteer keyboard as backup
+      console.log('⌨️ Sending backup "Run All" (Ctrl+F9)...');
       try {
+        await page.focus('body');
         await page.keyboard.down('Control');
         await page.keyboard.press('F9');
         await page.keyboard.up('Control');
       } catch {}
-
       await sleep(2000);
-      // Auto-click "Run anyway" if Colab shows untrusted notebook warning
       await handleAllModals();
     }
 
-    // Step 4: Monitor Execution & Search for Active Ngrok Tunnel URL
+    // Step 4: Monitor Execution & Search for Active Ngrok Tunnel URL across document AND IFRAMES
     console.log('⏳ Monitoring notebook execution and waiting for Ngrok tunnel...');
-    const maxWaitMs = 120000; // 2 minutes max
+    const maxWaitMs = 150000; // 2.5 minutes max
     const pollIntervalMs = 5000;
     const startTime = Date.now();
     let detectedNgrok = null;
@@ -462,31 +439,46 @@ async function run() {
       // Continuously handle any warning or reconnect dialogs
       await handleAllModals();
 
-      // Check for Ngrok URL in page text and cell output elements
-      const ngrokUrl = await page.evaluate(() => {
-        const text = document.body.innerText || '';
-        const match = text.match(/https:\/\/[a-zA-Z0-9-]+\.(ngrok-free\.app|ngrok\.io|ngrok\.app)[^\s'"]*/i);
-        return match ? match[0] : null;
+      // Check for Ngrok URL in main page AND all child iframes (where Colab outputs live!)
+      let combinedContent = '';
+      try {
+        combinedContent += await page.evaluate(() => document.body ? document.body.innerText : '');
+      } catch {}
+
+      const frames = page.frames();
+      for (const frame of frames) {
+        try {
+          const frameText = await frame.evaluate(() => document.body ? document.body.innerText : '');
+          if (frameText) combinedContent += '\n' + frameText;
+        } catch {}
+      }
+
+      // Also check if notebook has active execution indicator
+      const isExecuting = await page.evaluate(() => {
+        const executing = document.querySelector('colab-run-button[aria-label*="Executing"], [aria-label*="Interrupt execution"], #interrupt-execution');
+        return Boolean(executing);
       });
 
+      const match = combinedContent.match(/https:\/\/[a-zA-Z0-9-]+\.(ngrok-free\.app|ngrok\.io|ngrok\.app)[^\s'"<>]*/i);
       const elapsed = Math.round((Date.now() - startTime) / 1000);
 
-      if (ngrokUrl) {
-        detectedNgrok = ngrokUrl;
+      if (match) {
+        detectedNgrok = match[0];
         console.log('\n==================================================');
         console.log(`🎉 NGROK TUNNEL IS ACTIVE AND ONLINE!`);
         console.log(`🔗 URL: ${detectedNgrok}`);
         console.log('==================================================\n');
-        // Let it run for 15s more to stabilize the background process
-        await sleep(15000);
+        // Let it run for 20s more so tunnel stays fully online
+        await sleep(20000);
         break;
       } else {
-        console.log(`⏱️ Notebook is running... (${elapsed}s elapsed, checking for ngrok url...)`);
+        const execStatus = isExecuting ? ' [⚡ Cells executing]' : '';
+        console.log(`⏱️ Notebook is running... (${elapsed}s elapsed${execStatus}, checking for ngrok url...)`);
       }
     }
 
     if (!detectedNgrok) {
-      console.log('ℹ️ Wait window completed. Notebook execution started and running in background.');
+      console.log('ℹ️ Wait window completed. Notebook execution running in background.');
     }
 
     await page.screenshot({ path: 'colab-restarted.png' });
