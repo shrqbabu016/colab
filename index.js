@@ -106,6 +106,32 @@ async function run() {
   try {
     const page = await browser.newPage();
 
+    // Listen for any popup authorization windows (e.g., Google Drive consent)
+    browser.on('targetcreated', async (target) => {
+      try {
+        if (target.type() === 'page') {
+          const newPage = await target.page();
+          if (!newPage) return;
+          console.log(`🔗 Popup window opened: ${newPage.url()}`);
+          await sleep(3000);
+          await newPage.evaluate(() => {
+            const acc = document.querySelector('[data-identifier], [data-email], [role="link"], button');
+            if (acc) acc.click();
+          }).catch(() => {});
+          await sleep(2000);
+          await newPage.evaluate(() => {
+            const allowBtn = Array.from(document.querySelectorAll('button, #submit_approve_access')).find(b => {
+              const t = (b.innerText || '').toLowerCase();
+              return t.includes('allow') || t.includes('continue') || b.id === 'submit_approve_access';
+            });
+            if (allowBtn) allowBtn.click();
+          }).catch(() => {});
+        }
+      } catch (e) {
+        console.log('Notice in popup listener:', e.message);
+      }
+    });
+
     // Set User-Agent
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
@@ -223,7 +249,7 @@ async function run() {
 
     // Helper: Handle any open Colab modal/popup (Run anyway, Restart confirmation, Google Drive, etc.)
     async function handleAllModals() {
-      return await page.evaluate(() => {
+      const handledInPage = await page.evaluate(() => {
         function findInShadowsAll(selector, root = document) {
           let results = Array.from(root.querySelectorAll(selector));
           const all = root.querySelectorAll('*');
@@ -236,7 +262,7 @@ async function run() {
         }
 
         let handled = false;
-        const buttons = findInShadowsAll('button, mwc-button, paper-button, #ok, .colab-dialog button');
+        const buttons = findInShadowsAll('button, mwc-button, paper-button, #ok, .colab-dialog button, [slot="primaryAction"]');
         for (const btn of buttons) {
           const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
           if (
@@ -250,12 +276,53 @@ async function run() {
             text.includes('permit') ||
             btn.id === 'ok'
           ) {
-            btn.click();
-            handled = true;
+            try {
+              if (btn.shadowRoot && btn.shadowRoot.querySelector('button')) {
+                btn.shadowRoot.querySelector('button').click();
+              }
+              btn.click();
+              btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+              handled = true;
+            } catch (_) {}
           }
         }
         return handled;
       });
+
+      // Also try physical mouse click on coordinates if a modal is visible
+      try {
+        const box = await page.evaluate(() => {
+          function findInShadowsAll(selector, root = document) {
+            let results = Array.from(root.querySelectorAll(selector));
+            for (const item of root.querySelectorAll('*')) {
+              if (item.shadowRoot) {
+                results = results.concat(findInShadowsAll(selector, item.shadowRoot));
+              }
+            }
+            return results;
+          }
+
+          const candidates = findInShadowsAll('mwc-button, button, #ok, [slot="primaryAction"]');
+          for (const el of candidates) {
+            const text = (el.innerText || el.textContent || '').toLowerCase();
+            if (text.includes('connect to google drive') || text.includes('google drive')) {
+              const rect = el.getBoundingClientRect();
+              if (rect.width > 20 && rect.height > 10) {
+                return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, text: text.trim() };
+              }
+            }
+          }
+          return null;
+        });
+
+        if (box) {
+          console.log(`👆 Physically clicking modal button "${box.text}" at (${Math.round(box.x)}, ${Math.round(box.y)})...`);
+          await page.mouse.click(box.x, box.y);
+          return true;
+        }
+      } catch (_) {}
+
+      return handledInPage;
     }
 
     // Step 1: Connect if not connected
