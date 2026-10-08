@@ -221,7 +221,7 @@ async function run() {
       }, selector);
     }
 
-    // Helper: Handle any open Colab modal/popup (Run anyway, Restart confirmation, etc.)
+    // Helper: Handle any open Colab modal/popup (Run anyway, Restart confirmation, Google Drive, etc.)
     async function handleAllModals() {
       return await page.evaluate(() => {
         function findInShadowsAll(selector, root = document) {
@@ -236,7 +236,7 @@ async function run() {
         }
 
         let handled = false;
-        const buttons = findInShadowsAll('button, mwc-button, paper-button, #ok');
+        const buttons = findInShadowsAll('button, mwc-button, paper-button, #ok, .colab-dialog button');
         for (const btn of buttons) {
           const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
           if (
@@ -245,6 +245,9 @@ async function run() {
             text === 'yes' ||
             text.includes('run anyway') ||
             text.includes('restart session') ||
+            text.includes('connect to google drive') ||
+            text.includes('google drive') ||
+            text.includes('permit') ||
             btn.id === 'ok'
           ) {
             btn.click();
@@ -439,6 +442,31 @@ async function run() {
       // Continuously handle any warning or reconnect dialogs
       await handleAllModals();
 
+      // Check if Colab disconnected and needs reconnecting
+      try {
+        await page.evaluate(() => {
+          function findInShadows(selector, root = document) {
+            let el = root.querySelector(selector);
+            if (el) return el;
+            for (const item of root.querySelectorAll('*')) {
+              if (item.shadowRoot) {
+                const found = findInShadows(selector, item.shadowRoot);
+                if (found) return found;
+              }
+            }
+            return null;
+          }
+          const connectEl = findInShadows('colab-connect-button') || findInShadows('#connect');
+          if (connectEl) {
+            const btn = connectEl.shadowRoot ? (connectEl.shadowRoot.querySelector('button, mwc-button') || connectEl) : connectEl;
+            const text = (btn.innerText || btn.textContent || '').toLowerCase();
+            if (text.includes('reconnect') || text === 'connect') {
+              btn.click();
+            }
+          }
+        });
+      } catch (_) {}
+
       // Check for Ngrok URL in main page AND all child iframes (where Colab outputs live!)
       let combinedContent = '';
       try {
@@ -459,7 +487,8 @@ async function run() {
         return Boolean(executing);
       });
 
-      const match = combinedContent.match(/https:\/\/[a-zA-Z0-9-]+\.(ngrok-free\.app|ngrok\.io|ngrok\.app)[^\s'"<>]*/i);
+      const match = combinedContent.match(/https:\/\/[a-zA-Z0-9-]+\.(?:ngrok-free\.(?:dev|app)|ngrok\.(?:io|app|dev))[^\s'"<>]*/i) ||
+                    combinedContent.match(/https:\/\/[a-zA-Z0-9.-]+\.ngrok[a-zA-Z0-9.-]*/i);
       const elapsed = Math.round((Date.now() - startTime) / 1000);
 
       if (match) {
