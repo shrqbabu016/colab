@@ -3,6 +3,15 @@ const path = require('path');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 
+(async () => {
+  // Puppeteer ko profile data save/load karne ka raasta batayein
+  const browser = await puppeteer.launch({
+    headless: true,
+    userDataDir: './puppeteer_profile', // <-- YAHAN ADD KAREIN
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+
+  const page = await browser.newPage();
 // Enable stealth to minimize Google bot detection
 puppeteer.use(StealthPlugin());
 
@@ -594,3 +603,4 @@ async function run() {
 }
 
 run();
+})();
