@@ -1,39 +1,54 @@
 name: Colab Auto Restarter
-
 on:
   schedule:
     # Runs every 1 hour
     - cron: '0 * * * *'
   workflow_dispatch:
-
 jobs:
   restart-colab:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
-    steps:
-      - name: Checkout repository
+    steps:  
+      - name: Checkout repository  
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
+      - name: Set up Node.js  
+        uses: actions/setup-node@v4  
+        with:  
           node-version: 20
 
-      - name: Install dependencies
+      # 1. PURANI PROFILE LOAD KAREIN (Pichle run se)
+      - name: Restore Colab Profile
+        uses: actions/cache/restore@v4
+        with:
+          path: ./puppeteer_profile
+          key: colab-profile-${{ github.run_id }}
+          restore-keys: |
+            colab-profile-
+
+      - name: Install dependencies  
         run: npm install
 
-      - name: Run Puppeteer Colab Restarter
-        env:
-          COLAB_URL: ${{ secrets.COLAB_URL }}
-          COLAB_COOKIES: ${{ secrets.COLAB_COOKIES }}
-          RUN_AFTER_RESTART: 'true'
+      - name: Run Puppeteer Colab Restarter  
+        env:  
+          COLAB_URL: ${{ secrets.COLAB_URL }}  
+          COLAB_COOKIES: ${{ secrets.COLAB_COOKIES }}  
+          RUN_AFTER_RESTART: 'true'  
         run: node index.js
 
-      - name: Upload Debug Screenshots
+      # 2. NAYI/UPDATED PROFILE SAVE KAREIN (Next run ke liye)
+      - name: Save Colab Profile
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/cache/save@v4
         with:
-          name: colab-screenshots
-          path: '*.png'
+          path: ./puppeteer_profile
+          key: colab-profile-${{ github.run_id }}
+
+      - name: Upload Debug Screenshots  
+        if: always()  
+        uses: actions/upload-artifact@v4  
+        with:  
+          name: colab-screenshots  
+          path: '*.png'  
           if-no-files-found: ignore
